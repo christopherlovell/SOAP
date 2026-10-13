@@ -35,7 +35,10 @@ def spatial_sort(halo_cofp, halo_index, cellgrid, comm):
     Sort the halos based on what cell they are in, then based
     on their catalogue index
     """
-    cell_indices = (halo_cofp // cellgrid.cell_size).value.astype("int64")
+    cell_indices = ((halo_cofp - cellgrid.cell_origin) // cellgrid.cell_size).value.astype("int64")
+    if not cellgrid.cells_tile_box:
+        # Zoom grid: halos just outside it are filed under the nearest edge cell.
+        cell_indices = np.clip(cell_indices, 0, cellgrid.dimension - 1)
     assert cellgrid.dimension[0] >= cellgrid.dimension[1] >= cellgrid.dimension[2]
     # Assert that all halos are within the box
     if cell_indices.shape[0] > 0:
