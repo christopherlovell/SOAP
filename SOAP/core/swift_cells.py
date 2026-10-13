@@ -359,6 +359,15 @@ class SWIFTCellGrid:
                 infile["Cells/Meta-data"].attrs["size"], units=comoving_length_unit
             )
             self.cell_centres = infile["Cells/Centres"][...]
+            # Zoom snapshots write a cell grid covering only the high-resolution
+            # region, offset from the box corner by Origin.
+            self.cell_origin = unyt.unyt_array(
+                infile["Cells/Meta-data"].attrs.get("Origin", np.zeros(3)),
+                units=comoving_length_unit,
+            )
+            self.cells_tile_box = bool(
+                np.allclose(self.dimension * self.cell_size.value, self.boxsize.value)
+            )
             for name in infile["Cells/Counts"]:
                 self.ptypes.append(name)
 
@@ -600,8 +609,12 @@ class SWIFTCellGrid:
         return np.zeros(self.dimension, dtype=bool)
 
     def mask_region(self, mask, pos_min, pos_max):
-        imin = np.asarray(np.floor(pos_min / self.cell_size), dtype=int)
-        imax = np.asarray(np.floor(pos_max / self.cell_size), dtype=int)
+        imin = np.asarray(np.floor((pos_min - self.cell_origin) / self.cell_size), dtype=int)
+        imax = np.asarray(np.floor((pos_max - self.cell_origin) / self.cell_size), dtype=int)
+        if not self.cells_tile_box:
+            # No cells (hence no readable particles) outside a zoom grid.
+            imin = np.maximum(imin, 0)
+            imax = np.minimum(imax, self.dimension - 1)
         for i in range(imin[0], imax[0] + 1):
             ii = i % self.dimension[0]
             for j in range(imin[1], imax[1] + 1):
