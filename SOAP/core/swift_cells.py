@@ -395,6 +395,27 @@ class SWIFTCellGrid:
         for ptype in self.ptypes:
             self.cell[ptype] = self.cell[ptype].reshape(self.dimension)
 
+        # A zoom snapshot indexes only the zoom grid's cells. Particles in SWIFT's
+        # background cells (low-res, and high-res outside the grid) are in no
+        # cell, so record their ranges in each file: prepare_read adds them.
+        self.unindexed = {ptype: [] for ptype in self.ptypes}
+        if not self.cells_tile_box:
+            for file_nr in range(self.nr_files):
+                with h5py.File(snap_filename.format(file_nr=file_nr), "r") as infile:
+                    nr_in_file = infile["Header"].attrs["NumPart_ThisFile"]
+                for ptype in self.ptypes:
+                    cells = self.cell[ptype].reshape(-1)
+                    cells = cells[cells["file"] == file_nr]
+                    cells = cells[np.argsort(cells["offset"], kind="stable")]
+                    start = 0
+                    for offset, count in zip(cells["offset"], cells["count"]):
+                        if offset > start:
+                            self.unindexed[ptype].append((file_nr, start, offset - start))
+                        start = max(start, offset + count)
+                    end = int(nr_in_file[int(ptype[len("PartType") :])])
+                    if end > start:
+                        self.unindexed[ptype].append((file_nr, start, end - start))
+
         # Scan files to find shape and dtype etc for all quantities in the snapshot.
         self.snap_metadata = identify_datasets(
             snap_filename, self.nr_files, self.ptypes, self.snap_unit_registry
@@ -567,6 +588,14 @@ class SWIFTCellGrid:
 
         # Discard any empty cells
         cells_to_read = cells_to_read[cells_to_read["count"] > 0]
+
+        # On a zoom grid, read the particles which are in no cell too
+        if self.unindexed[ptype] and mask.any():
+            extra = np.zeros(len(self.unindexed[ptype]), dtype=swift_cell_t)
+            extra["file"], extra["offset"], extra["count"] = np.asarray(
+                self.unindexed[ptype]
+            ).T
+            cells_to_read = np.concatenate([cells_to_read, extra])
 
         # Sort the selected cells by file, and then by offset within the file
         idx = np.lexsort((cells_to_read["offset"], cells_to_read["file"]))
